@@ -82,9 +82,3 @@ This system evaluates the strengths of different neural architectures in a clini
 **Divyansh010605**
 * GitHub: [@Divyansh010605](https://github.com/Divyansh010605)
 
-## 📝 License
-
-Licensed under the MIT License.
-```
-
-Alternatively, you can just click into the document editor on the right side of your screen, press **`Ctrl + A`** (or `Cmd + A` on Mac) to select all the text, and then press **`Ctrl + C`** (or `Cmd + C`) to copy it!
