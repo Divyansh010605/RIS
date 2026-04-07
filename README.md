@@ -77,8 +77,4 @@ This system evaluates the strengths of different neural architectures in a clini
    python main.py
    ```
 
-## 👤 Author
-
-**Divyansh010605**
-* GitHub: [@Divyansh010605](https://github.com/Divyansh010605)
 
