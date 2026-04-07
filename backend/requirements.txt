@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-multipart
+torch
+torchvision
+numpy
+opencv-python-headless
+pillow
+sqlalchemy
+passlib[bcrypt]
+pyjwt
