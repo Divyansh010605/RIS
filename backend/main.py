@@ -151,9 +151,6 @@ def load_classes(filepath):
     except FileNotFoundError:
         return 14
 
-XRAY_CLASSES = load_classes("models/XRAY_MODELS/classes.pkl")
-CT_CLASSES = load_classes("models/CT_MODELS/classes.pkl")
-
 def load_model(ModelClass, weights_path, num_classes):
     model = ModelClass(num_classes).to(DEVICE)
     try:
@@ -163,16 +160,22 @@ def load_model(ModelClass, weights_path, num_classes):
     except FileNotFoundError:
         return None
 
+XRAY_DIR = "models/XRAY_MODELS"
+CT_DIR = "models/CT_MODELS"
+
+xray_classes = load_classes(f"{XRAY_DIR}/classes.pkl")
+ct_classes = load_classes(f"{CT_DIR}/classes.pkl")
+
 system_models = {
     "xray": {
-        "densenet": load_model(DenseNet169_GradCAM, "models/XRAY_MODELS/densenet_best.pth", XRAY_CLASSES),
-        "resnet": load_model(ResNet50_GradCAM, "models/XRAY_MODELS/resnet_best.pth", XRAY_CLASSES),
-        "swin": load_model(SwinModel, "models/XRAY_MODELS/swin_best.pth", XRAY_CLASSES)
+        "densenet": load_model(DenseNet169_GradCAM, f"{XRAY_DIR}/densenet_best.pth", xray_classes),
+        "resnet": load_model(ResNet50_GradCAM, f"{XRAY_DIR}/resnet_best.pth", xray_classes),
+        "swin": load_model(SwinModel, f"{XRAY_DIR}/swin_best.pth", xray_classes)
     },
     "ct": {
-        "densenet": load_model(DenseNet169_GradCAM, "models/CT_MODELS/densenet_best.pth", CT_CLASSES),
-        "resnet": load_model(ResNet50_GradCAM, "models/CT_MODELS/resnet_best.pth", CT_CLASSES),
-        "swin": load_model(SwinModel, "models/CT_MODELS/swin_best.pth", CT_CLASSES)
+        "densenet": load_model(DenseNet169_GradCAM, f"{CT_DIR}/densenet_best.pth", ct_classes),
+        "resnet": load_model(ResNet50_GradCAM, f"{CT_DIR}/resnet_best.pth", ct_classes),
+        "swin": load_model(SwinModel, f"{CT_DIR}/swin_best.pth", ct_classes)
     }
 }
 
