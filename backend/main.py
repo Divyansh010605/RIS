@@ -18,7 +18,6 @@ import torch
 import torch.nn as nn
 from torchvision import transforms, models
 
-# --- DATABASE & SECURITY SETUP ---
 SECRET_KEY = "super-secret-ris-key-change-in-production"
 ALGORITHM = "HS256"
 
@@ -44,7 +43,6 @@ def get_db():
     finally:
         db.close()
 
-# --- FASTAPI APP ---
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -54,7 +52,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Pydantic Models ---
 class UserCreate(BaseModel):
     name: str
     email: str
@@ -64,7 +61,6 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
-# --- AUTH ENDPOINTS ---
 @app.post("/api/signup")
 def signup(user: UserCreate, db: Session = Depends(get_db)):
     db_user = db.query(UserDB).filter(UserDB.email == user.email).first()
@@ -95,7 +91,6 @@ def verify_token(token: str = Depends(oauth2_scheme)):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-# --- ML SETUP (From previous code) ---
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 IMG_SIZE = 256
 
@@ -149,15 +144,17 @@ class SwinModel(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-num_classes = 14
-try:
-    with open("models/classes.pkl", "rb") as f:
-        classes = pickle.load(f)
-        num_classes = len(classes)
-except FileNotFoundError:
-    pass
+def load_classes(filepath):
+    try:
+        with open(filepath, "rb") as f:
+            return len(pickle.load(f))
+    except FileNotFoundError:
+        return 14
 
-def load_model(ModelClass, weights_path):
+XRAY_CLASSES = load_classes("models/XRAY_MODELS/classes.pkl")
+CT_CLASSES = load_classes("models/CT_MODELS/classes.pkl")
+
+def load_model(ModelClass, weights_path, num_classes):
     model = ModelClass(num_classes).to(DEVICE)
     try:
         model.load_state_dict(torch.load(weights_path, map_location=DEVICE))
@@ -166,9 +163,18 @@ def load_model(ModelClass, weights_path):
     except FileNotFoundError:
         return None
 
-densenet = load_model(DenseNet169_GradCAM, "models/densenet_best.pth")
-resnet = load_model(ResNet50_GradCAM, "models/resnet_best.pth")
-swin = load_model(SwinModel, "models/swin_best.pth")
+system_models = {
+    "xray": {
+        "densenet": load_model(DenseNet169_GradCAM, "models/XRAY_MODELS/densenet_best.pth", XRAY_CLASSES),
+        "resnet": load_model(ResNet50_GradCAM, "models/XRAY_MODELS/resnet_best.pth", XRAY_CLASSES),
+        "swin": load_model(SwinModel, "models/XRAY_MODELS/swin_best.pth", XRAY_CLASSES)
+    },
+    "ct": {
+        "densenet": load_model(DenseNet169_GradCAM, "models/CT_MODELS/densenet_best.pth", CT_CLASSES),
+        "resnet": load_model(ResNet50_GradCAM, "models/CT_MODELS/resnet_best.pth", CT_CLASSES),
+        "swin": load_model(SwinModel, "models/CT_MODELS/swin_best.pth", CT_CLASSES)
+    }
+}
 
 transform = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
@@ -208,10 +214,15 @@ def image_to_base64(img_array):
     img.save(buff, format="JPEG")
     return base64.b64encode(buff.getvalue()).decode("utf-8")
 
-# PROTECTED ML ENDPOINT
 @app.post("/api/analyze")
 async def analyze(image: UploadFile = File(...), scanType: str = Form("xray"), current_user: str = Depends(verify_token)):
     try:
+        scan_category = scanType.lower()
+        if scan_category not in system_models:
+            raise HTTPException(status_code=400, detail="Invalid scan type selected.")
+
+        active_models = system_models[scan_category]
+
         contents = await image.read()
         img = Image.open(io.BytesIO(contents)).convert("RGB")
         original_img = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
@@ -221,9 +232,8 @@ async def analyze(image: UploadFile = File(...), scanType: str = Form("xray"), c
         img_tensor.requires_grad_()
 
         results = {"original": f"data:image/jpeg;base64,{image_to_base64(original_img)}"}
-        models_dict = {"densenet": densenet, "resnet": resnet, "swin": swin}
 
-        for name, model in models_dict.items():
+        for name, model in active_models.items():
             heatmap, overlay = generate_gradcam(model, img_tensor, original_img)
             results[name] = {
                 "heatmap": f"data:image/jpeg;base64,{image_to_base64(heatmap)}",
