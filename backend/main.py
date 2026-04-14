@@ -169,7 +169,7 @@ def load_model(ModelClass, weights_path, num_classes):
         return None
 
 XRAY_DIR = "models/XRAY_MODELS"
-CT_DIR = "models/CT_MODELS"
+CT_DIR = "models/CT_Scan_models"
 
 xray_classes = load_classes(f"{XRAY_DIR}/classes.pkl")
 ct_classes = load_classes(f"{CT_DIR}/classes.pkl")
@@ -182,8 +182,8 @@ system_models = {
     },
     "ct": {
         "densenet": load_model(DenseNet169_GradCAM, f"{CT_DIR}/densenet_best.pth", ct_classes),
-        "resnet": load_model(ResNet50_GradCAM, f"{CT_DIR}/resnet_best.pth", ct_classes),
-        "swin": load_model(SwinModel, f"{CT_DIR}/swin_best.pth", ct_classes)
+        "resnet": load_model(ResNet50_GradCAM, f"{CT_DIR}/restnet50.pkl", ct_classes),
+        "swin": load_model(SwinModel, f"{CT_DIR}/swin_model.pkl", ct_classes)
     }
 }
 

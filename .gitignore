@@ -12,5 +12,6 @@ frontend/node_modules/
 frontend/dist/
 
 # Model artifacts and generated weights
-backend/models/CT_Scan_models/
 *.pkl
+!backend/models/CT_Scan_models/
+!backend/models/CT_Scan_models/*.pkl
