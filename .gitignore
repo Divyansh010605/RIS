@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.sqlite3
+backend/users.db
+
+# Node / frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Model artifacts and generated weights
+backend/models/CT_Scan_models/
+*.pkl

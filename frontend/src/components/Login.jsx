@@ -1,17 +1,20 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Activity, ArrowRight, Lock, Mail, AlertCircle } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Activity, ArrowRight, Lock, Mail, AlertCircle, UserCircle, ClipboardCopy } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 // Replace with your Codespace URL in production
-const API_URL = 'http://localhost:8000'; 
+const API_URL = 'http://127.0.0.1:8000'; 
+const TEST_EMAIL = 'test@ris.local';
+const TEST_PASSWORD = 'Test@12345';
 
 export default function Login({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -24,6 +27,16 @@ export default function Login({ onLogin }) {
       setError(err.response?.data?.detail || 'Login failed');
     }
     setLoading(false);
+  };
+
+  const handleGuestAccess = () => {
+    onLogin('guest', { name: 'Guest User', email: 'Free dashboard access' });
+    navigate('/dashboard');
+  };
+
+  const fillTestCredentials = () => {
+    setEmail(TEST_EMAIL);
+    setPassword(TEST_PASSWORD);
   };
 
   return (
@@ -67,6 +80,31 @@ export default function Login({ onLogin }) {
             {loading ? 'Authenticating...' : 'Access Dashboard'} <ArrowRight className="w-5 h-5" />
           </motion.button>
         </form>
+
+        <div className="mt-4 space-y-3">
+          <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 text-sm text-slate-300">
+            <div className="flex items-center gap-2 text-cyan-300 font-semibold mb-2">
+              <ClipboardCopy className="w-4 h-4" /> Test credentials
+            </div>
+            <p>Email: <span className="font-mono text-white">{TEST_EMAIL}</span></p>
+            <p>Password: <span className="font-mono text-white">{TEST_PASSWORD}</span></p>
+            <button
+              type="button"
+              onClick={fillTestCredentials}
+              className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-cyan-300 hover:text-cyan-200"
+            >
+              <UserCircle className="w-4 h-4" /> Fill test login fields
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={handleGuestAccess}
+            className="w-full flex items-center justify-center gap-2 bg-white/5 hover:bg-white/10 text-white font-semibold py-3.5 rounded-xl transition-all border border-white/10"
+          >
+            <UserCircle className="w-5 h-5" /> Continue as Guest
+          </button>
+          <p className="text-center text-slate-500 text-xs">Guest access opens the dashboard without a login.</p>
+        </div>
 
         <p className="text-center text-slate-400 mt-8 text-sm">
           No account? <Link to="/signup" className="text-cyan-400 hover:text-cyan-300 font-medium">Request access</Link>

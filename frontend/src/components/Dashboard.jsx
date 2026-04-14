@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { UploadCloud, Loader2, RefreshCw, Scan, Fingerprint } from 'lucide-react';
 import axios from 'axios';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = 'http://127.0.0.1:8000';
 
 export default function Dashboard({ token }) {
   const [file, setFile] = useState(null);
@@ -29,9 +29,13 @@ export default function Dashboard({ token }) {
     formData.append('image', file);
     formData.append('scanType', scanType);
 
+    const headers = token && token !== 'guest'
+      ? { Authorization: `Bearer ${token}` }
+      : {};
+
     try {
       const response = await axios.post(`${API_URL}/api/analyze`, formData, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers
       });
       setResults(response.data);
     } catch (error) {

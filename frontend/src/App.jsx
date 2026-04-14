@@ -29,9 +29,9 @@ export default function App() {
       <div className="min-h-screen relative z-10">
         <Navbar user={user} onLogout={logoutUser} />
         <Routes>
-          <Route path="/" element={!token ? <Login onLogin={loginUser} /> : <Navigate to="/dashboard" />} />
-          <Route path="/signup" element={!token ? <Signup onLogin={loginUser} /> : <Navigate to="/dashboard" />} />
-          <Route path="/dashboard" element={token ? <Dashboard token={token} /> : <Navigate to="/" />} />
+          <Route path="/" element={!token ? <Login onLogin={loginUser} /> : <Navigate to="/dashboard" replace />} />
+          <Route path="/signup" element={!token ? <Signup onLogin={loginUser} /> : <Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Dashboard token={token} />} />
         </Routes>
       </div>
     </Router>
