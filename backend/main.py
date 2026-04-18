@@ -228,8 +228,8 @@ def preprocess_keras_image(image, model_key):
 
 def binary_label(probability):
     if probability >= 0.5:
-        return "Cancer Detected", probability
-    return "No Cancer Detected", 1 - probability
+        return "Cancer Detected", probability, True
+    return "No Cancer Detected", probability, False
 
 def build_colormap_overlay(original_img, heatmap):
     heatmap = np.maximum(heatmap, 0)
@@ -382,7 +382,7 @@ def generate_torch_result(model, img_tensor, original_img, class_names=None):
             "overlay": overlay,
         }
 
-def generate_keras_gradcam(model, image_array, original_img, last_conv_layer_name):
+def generate_keras_gradcam(model, image_array, original_img, last_conv_layer_name, target_positive=True):
     if model is None:
         return original_img, original_img
 
@@ -390,7 +390,10 @@ def generate_keras_gradcam(model, image_array, original_img, last_conv_layer_nam
         grad_model = keras.models.Model(model.inputs, [model.get_layer(last_conv_layer_name).output, model.output])
         with tf.GradientTape() as tape:
             conv_outputs, predictions = grad_model(image_array, training=False)
-            loss = predictions[:, 0]
+            if target_positive:
+                loss = predictions[:, 0]
+            else:
+                loss = 1.0 - predictions[:, 0]
 
         grads = tape.gradient(loss, conv_outputs)
         if grads is None:
@@ -419,12 +422,13 @@ def generate_keras_gradcam(model, image_array, original_img, last_conv_layer_nam
 def generate_keras_result(model, model_key, image):
     image_batch, resized_image = preprocess_keras_image(image, model_key)
     raw_prediction = model(image_batch, training=False).numpy().reshape(-1)[0]
-    prediction_label, confidence = binary_label(float(raw_prediction))
+    prediction_label, confidence, target_positive = binary_label(float(raw_prediction))
     heatmap, overlay = generate_keras_gradcam(
         model,
         image_batch,
         cv2.cvtColor(resized_image, cv2.COLOR_RGB2BGR),
         system_models["ct"][model_key]["last_conv_layer"],
+        target_positive=target_positive,
     )
     return {
         "prediction": prediction_label,
