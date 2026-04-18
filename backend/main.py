@@ -111,10 +111,10 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 XRAY_IMG_SIZE = 256
 CT_IMG_SIZE = 224
 
-class DenseNet121_GradCAM(nn.Module):
+class DenseNet169_GradCAM(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
-        self.model = models.densenet121(weights=None)
+        self.model = models.densenet169(weights=None)
         num_ftrs = self.model.classifier.in_features
         self.model.classifier = nn.Linear(num_ftrs, num_classes)
         self.gradients = None
@@ -273,7 +273,7 @@ system_models = {
         "densenet": {
             "kind": "torch",
             "label": "DenseNet121",
-            "model": load_torch_model(DenseNet121_GradCAM, f"{XRAY_DIR}/densenet_best.pth", len(xray_classes)),
+            "model": load_torch_model(DenseNet169_GradCAM, f"{XRAY_DIR}/densenet_best.pth", len(xray_classes)),
             "class_names": xray_classes,
         },
         "resnet": {

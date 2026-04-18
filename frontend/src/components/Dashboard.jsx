@@ -124,7 +124,9 @@ export default function Dashboard({ token }) {
                   className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-center bg-black/40 p-6 rounded-2xl border border-white/5 hover:border-white/10 transition-colors"
                 >
                   <div className="space-y-2 pl-2">
-                    <h4 className="font-bold text-lg text-white">{data.label}</h4>
+                    <h4 className="font-bold text-lg text-white">
+                      {scanType === 'xray' && modelKey === 'densenet' ? 'DenseNet121' : data.label}
+                    </h4>
                     <p className="text-xs text-cyan-400/70 font-mono">Prediction: {data.prediction}</p>
                     <p className="text-xs text-slate-400 font-mono">Confidence: {(Number(data.confidence) * 100).toFixed(1)}%</p>
                     {data.status && data.prediction === 'Unavailable' && <p className="text-xs text-amber-300/80 font-mono">Status: {data.status}</p>}
