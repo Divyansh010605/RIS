@@ -292,14 +292,14 @@ system_models = {
     "ct": {
         "densenet": {
             "kind": "keras",
-            "label": "Densenet121",
+            "label": "DenseNet121",
             "model": load_keras_model(f"{CT_DIR}/densenet121_lung_model.pkl"),
             "last_conv_layer": "conv5_block16_concat",
             "preprocess": "densenet",
         },
         "resnet": {
             "kind": "keras",
-            "label": "restnet50",
+            "label": "ResNet50",
             "model": load_keras_model(f"{CT_DIR}/restnet50.pkl"),
             "last_conv_layer": "conv5_block3_out",
             "preprocess": "resnet",
@@ -313,7 +313,7 @@ system_models = {
         },
         "swin": {
             "kind": "torch",
-            "label": "swin transformer",
+            "label": "Swin Transformer",
             "model": load_optional_torch_serialized_model(f"{CT_DIR}/swin_model.pkl"),
             "class_names": ["Negative", "Positive"],
             "unavailable_reason": "swin checkpoint could not be restored on current runtime",
