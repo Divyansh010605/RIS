@@ -13,6 +13,8 @@ export default function Dashboard({ token }) {
   const [results, setResults] = useState(null);
   const fileInputRef = useRef(null);
 
+  const modelEntries = Object.entries(results?.models ?? {});
+
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
     if (selectedFile) {
@@ -91,8 +93,8 @@ export default function Dashboard({ token }) {
           ) : (
             <div className="flex flex-col items-center text-slate-500 group-hover:text-cyan-400 transition-colors">
               <UploadCloud className="w-16 h-16 mb-4 opacity-50 group-hover:opacity-100" />
-              <p className="font-medium text-lg">Select DICOM/Image file</p>
-              <p className="text-xs mt-2 opacity-60">End-to-end encrypted processing</p>
+              <p className="font-medium text-lg">Select X-ray or CT image</p>
+              <p className="text-xs mt-2 opacity-60">PNG, JPG, or extracted CT slice</p>
             </div>
           )}
         </div>
@@ -115,34 +117,35 @@ export default function Dashboard({ token }) {
             </div>
 
             <div className="space-y-6">
-              {['DenseNet169', 'ResNet50', 'Swin Transformer'].map((modelName, i) => {
-                const data = results[modelName.split(' ')[0].toLowerCase()];
-                return (
-                  <motion.div 
-                    key={modelName}
-                    initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.15 }}
-                    className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-center bg-black/40 p-6 rounded-2xl border border-white/5 hover:border-white/10 transition-colors"
-                  >
-                    <div className="space-y-1 pl-2">
-                      <h4 className="font-bold text-lg text-white">{modelName}</h4>
-                      <p className="text-xs text-cyan-400/70 font-mono">confidence bounds resolved</p>
+              {modelEntries.length > 0 ? modelEntries.map(([modelKey, data], i) => (
+                <motion.div 
+                  key={modelKey}
+                  initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.15 }}
+                  className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-center bg-black/40 p-6 rounded-2xl border border-white/5 hover:border-white/10 transition-colors"
+                >
+                  <div className="space-y-2 pl-2">
+                    <h4 className="font-bold text-lg text-white">{data.label}</h4>
+                    <p className="text-xs text-cyan-400/70 font-mono">Prediction: {data.prediction}</p>
+                    <p className="text-xs text-slate-400 font-mono">Confidence: {(Number(data.confidence) * 100).toFixed(1)}%</p>
+                    {data.status && data.prediction === 'Unavailable' && <p className="text-xs text-amber-300/80 font-mono">Status: {data.status}</p>}
+                  </div>
+                  
+                  {[
+                    { title: "Source", img: results.original },
+                    { title: "Heatmap", img: data.heatmap },
+                    { title: "Composite", img: data.overlay, highlight: true }
+                  ].map((col, idx) => (
+                    <div key={idx} className="flex flex-col">
+                      <p className="text-xs uppercase tracking-widest text-slate-500 mb-3 pl-1">{col.title}</p>
+                      <motion.div whileHover={{ scale: 1.03 }} className={`relative rounded-xl overflow-hidden aspect-square ${col.highlight ? 'ring-2 ring-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.15)]' : 'border border-white/10'}`}>
+                        <img src={col.img} className="w-full h-full object-cover" alt={col.title} />
+                      </motion.div>
                     </div>
-                    
-                    {[
-                      { title: "Source", img: results.original },
-                      { title: "Heatmap", img: data.heatmap },
-                      { title: "Composite", img: data.overlay, highlight: true }
-                    ].map((col, idx) => (
-                      <div key={idx} className="flex flex-col">
-                        <p className="text-xs uppercase tracking-widest text-slate-500 mb-3 pl-1">{col.title}</p>
-                        <motion.div whileHover={{ scale: 1.03 }} className={`relative rounded-xl overflow-hidden aspect-square ${col.highlight ? 'ring-2 ring-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.15)]' : 'border border-white/10'}`}>
-                          <img src={col.img} className="w-full h-full object-cover" alt={col.title} />
-                        </motion.div>
-                      </div>
-                    ))}
-                  </motion.div>
-                );
-              })}
+                  ))}
+                </motion.div>
+              )) : (
+                <div className="text-slate-400 text-sm">No model outputs were returned for this scan.</div>
+              )}
             </div>
           </motion.div>
         )}

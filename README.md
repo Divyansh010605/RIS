@@ -77,4 +77,15 @@ This system evaluates the strengths of different neural architectures in a clini
    python main.py
    ```
 
+### Extracting CT slices from LIDC-IDRI
+
+Use the extraction helper to convert the LIDC-IDRI DICOM series into PNG slices that can be uploaded to the CT detector:
+
+```bash
+cd backend
+python scripts/extract_lidc_idri_slices.py --input-root "D:/LIDC-IDRI" --output-root "./data/lidc_slices"
+```
+
+The script creates one folder per CT series and writes a `manifest.csv` with the generated slice paths. The saved PNGs are already windowed for lung CT viewing and can be uploaded directly into the CT mode of the dashboard.
+
 
