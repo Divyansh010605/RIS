@@ -158,6 +158,7 @@ class SwinModel(nn.Module):
         super().__init__()
         self.model = models.swin_t(weights=None)
         self.model.head = nn.Linear(self.model.head.in_features, num_classes)
+    
     def forward(self, x):
         return self.model(x)
 
@@ -333,11 +334,14 @@ def generate_torch_result(model, img_tensor, original_img, class_names=None):
 
     model.zero_grad()
     with torch.enable_grad():
-        if isinstance(model, SwinModel):
-            logits = model(img_tensor)
-            features = None
+        result = model(img_tensor)
+        
+        # Handle both single output (just logits) and tuple output (logits, features)
+        if isinstance(result, tuple):
+            logits, features = result
         else:
-            logits, features = model(img_tensor)
+            logits = result
+            features = None
 
         probabilities = torch.softmax(logits, dim=1)
         confidence, predicted_idx = torch.max(probabilities, dim=1)
@@ -348,6 +352,17 @@ def generate_torch_result(model, img_tensor, original_img, class_names=None):
             prediction_label = class_names[predicted_idx]
         else:
             prediction_label = f"Class {predicted_idx}"
+
+        # For Swin Transformer, use a proxy heatmap since GradCAM is complex for transformers
+        if isinstance(model, SwinModel):
+            proxy = centered_proxy_heatmap(original_img)
+            heatmap_colored, overlay = build_colormap_overlay(original_img, proxy)
+            return {
+                "prediction": prediction_label,
+                "confidence": confidence_value,
+                "heatmap": heatmap_colored,
+                "overlay": overlay,
+            }
 
         if features is None:
             return {
