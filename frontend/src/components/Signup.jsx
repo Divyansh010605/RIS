@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Activity, User, Lock, Mail, AlertCircle } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
-const API_URL = 'http://localhost:8000';
+const API_URL = 'http://127.0.0.1:8000';
 
 export default function Signup({ onLogin }) {
   const [name, setName] = useState('');
@@ -12,6 +12,7 @@ export default function Signup({ onLogin }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
 
   const handleSignup = async (e) => {
     e.preventDefault();
@@ -20,6 +21,7 @@ export default function Signup({ onLogin }) {
     try {
       const res = await axios.post(`${API_URL}/api/signup`, { name, email, password });
       onLogin(res.data.token, res.data.user);
+      navigate('/dashboard');
     } catch (err) {
       setError(err.response?.data?.detail || 'Registration failed');
     }
@@ -61,7 +63,7 @@ export default function Signup({ onLogin }) {
 
           <motion.button 
             whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} disabled={loading}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-3.5 rounded-xl transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)] mt-6"
+            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold py-3.5 rounded-xl transition-all shadow-[0_0_20px_rgba(79,70,229,0.3)] mt-6 disabled:opacity-50"
           >
             {loading ? 'Registering...' : 'Register as Provider'}
           </motion.button>
