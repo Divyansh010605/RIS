@@ -20,12 +20,22 @@ import torch
 import torch.nn as nn
 from torchvision import transforms, models
 
-os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 import tensorflow as tf
 from tensorflow import keras
 
-warnings.filterwarnings("ignore", message="The structure of `inputs` doesn't match the expected structure.*")
-warnings.filterwarnings("ignore", message="Skipping variable loading for optimizer .*")
+# Patch Keras Dense layer to ignore unrecognized quantization_config parameter
+original_dense_from_config = keras.layers.Dense.from_config
+@classmethod
+def patched_dense_from_config(cls, config):
+    config.pop('quantization_config', None)
+    return original_dense_from_config(config)
+keras.layers.Dense.from_config = patched_dense_from_config
+
+warnings.filterwarnings("ignore")
+tf.get_logger().setLevel('ERROR')
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -36,6 +46,10 @@ SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-ris-key-change-in-production"
 ALGORITHM = "HS256"
 TEST_EMAIL = "test@ris.local"
 TEST_PASSWORD = "Test@12345"
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./users.db")
+SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
+SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
+
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./users.db")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
@@ -73,9 +87,6 @@ class UserCreate(BaseModel):
     name: str
     email: str
     password: str
-    
-    class Config:
-        min_str_len = 1
     
     def validate(self):
         if not self.name or len(self.name.strip()) < 2:
@@ -256,16 +267,56 @@ def load_torch_model(ModelClass, weights_path, num_classes):
         logger.error(f"Error loading torch model {weights_path}: {str(e)}")
         return None
 
+class KerasCompatibleUnpickler(pickle.Unpickler):
+    """Custom unpickler that removes incompatible Keras parameters during deserialization"""
+    def find_class(self, module, name):
+        if module == 'keras.src.layers.core.dense' or (module == 'keras.layers' and name == 'Dense'):
+            return super().find_class('keras.src.layers.core.dense', 'Dense')
+        return super().find_class(module, name)
+
+class CustomDense(keras.layers.Dense):
+    def __init__(self, *args, **kwargs):
+        kwargs.pop('quantization_config', None)
+        super().__init__(*args, **kwargs)
+
 def load_keras_model(weights_path):
     if not os.path.exists(weights_path):
         logger.warning(f"Keras model file not found: {weights_path}")
         return None
     try:
+        # Try standard pickle first
         with open(weights_path, "rb") as f:
-            return pickle.load(f)
-    except Exception as e:
-        logger.error(f"Error loading keras model {weights_path}: {str(e)}")
+            model = pickle.load(f)
+        return model
+    except (TypeError, AttributeError) as e:
+        # If quantization_config error, try custom unpickler
+        if 'quantization_config' in str(e):
+            try:
+                with open(weights_path, "rb") as f:
+                    # Read and modify pickle data to remove quantization_config
+                    data = f.read()
+                    # Replace quantization_config entries
+                    data = data.replace(b"'quantization_config'", b"'_disabled_config'")
+                    model = pickle.loads(data)
+                return model
+            except Exception as e_inner:
+                pass
+        # Try keras native loader
+        try:
+            model = keras.models.load_model(weights_path, compile=False, safe_mode=False, custom_objects={'Dense': CustomDense})
+            return model
+        except:
+            pass
+        # Last resort - return None with warning
+        print(f"Warning: Could not load Keras model from {weights_path}. Error: {e}")
         return None
+    except Exception as e:
+        try:
+            model = keras.models.load_model(weights_path, compile=False, safe_mode=False, custom_objects={'Dense': CustomDense})
+            return model
+        except Exception as e2:
+            print(f"Warning: Could not load Keras model from {weights_path}. Error: {e}. Keras Error: {e2}")
+            return None
 
 def preprocess_keras_image(image, model_key):
     image = image.resize((CT_IMG_SIZE, CT_IMG_SIZE))
@@ -303,7 +354,7 @@ def centered_proxy_heatmap(original_img):
     heatmap = np.exp(-(((x - cx) ** 2) / (2 * sigma_x ** 2) + ((y - cy) ** 2) / (2 * sigma_y ** 2)))
     return heatmap.astype(np.float32)
 
-def unavailable_result(label, original_img, reason="Model could not be loaded in this runtime", heatmap_img=None, overlay_img=None):
+def unavailable_result(label, original_img, reason="Model unavailable in this runtime", heatmap_img=None, overlay_img=None):
     if heatmap_img is None or overlay_img is None:
         proxy = centered_proxy_heatmap(original_img)
         heatmap_img, overlay_img = build_colormap_overlay(original_img, proxy)
@@ -678,5 +729,5 @@ async def analyze(image: UploadFile = File(...), scanType: str = Form("xray"), c
 
 if __name__ == "__main__":
     import uvicorn
-    logger.info(f"Starting RIS backend on 0.0.0.0:8000, Device: {DEVICE}")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    logger.info(f"Starting RIS backend on {SERVER_HOST}:{SERVER_PORT}, Device: {DEVICE}")
+    uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)
