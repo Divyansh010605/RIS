@@ -1,9 +1,11 @@
 import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { UploadCloud, Loader2, RefreshCw, Scan, Fingerprint } from 'lucide-react';
+import { UploadCloud, Loader2, RefreshCw, Scan, Fingerprint, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 
 const API_URL = 'http://127.0.0.1:8000';
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+const ALLOWED_FORMATS = ['image/jpeg', 'image/png', 'image/gif'];
 
 export default function Dashboard({ token }) {
   const [file, setFile] = useState(null);
@@ -11,22 +13,38 @@ export default function Dashboard({ token }) {
   const [scanType, setScanType] = useState('xray');
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
+  const [error, setError] = useState('');
   const fileInputRef = useRef(null);
 
   const modelEntries = Object.entries(results?.models ?? {});
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
-    if (selectedFile) {
-      setFile(selectedFile);
-      setPreview(URL.createObjectURL(selectedFile));
-      setResults(null);
+    setError('');
+    
+    if (!selectedFile) return;
+    
+    // Validate file size
+    if (selectedFile.size > MAX_FILE_SIZE) {
+      setError('File size exceeds 10MB limit');
+      return;
     }
+    
+    // Validate file type
+    if (!ALLOWED_FORMATS.includes(selectedFile.type)) {
+      setError('Only JPEG, PNG, and GIF formats are supported');
+      return;
+    }
+    
+    setFile(selectedFile);
+    setPreview(URL.createObjectURL(selectedFile));
+    setResults(null);
   };
 
   const handleAnalyze = async () => {
     if (!file) return;
     setLoading(true);
+    setError('');
     const formData = new FormData();
     formData.append('image', file);
     formData.append('scanType', scanType);
@@ -37,12 +55,22 @@ export default function Dashboard({ token }) {
 
     try {
       const response = await axios.post(`${API_URL}/api/analyze`, formData, {
-        headers
+        headers,
+        timeout: 60000 // 60 second timeout
       });
       setResults(response.data);
+      setError('');
     } catch (error) {
-      if(error.response?.status === 401) alert("Session expired. Please log in again.");
-      else alert("Analysis failed. Check backend console.");
+      if (error.response?.status === 401) {
+        setError("Session expired. Please log in again.");
+      } else if (error.response?.status === 400) {
+        setError(error.response?.data?.detail || "Invalid scan type or file format");
+      } else if (error.code === 'ECONNABORTED') {
+        setError("Analysis timeout. Please try again with a smaller image.");
+      } else {
+        setError(error.response?.data?.detail || "Analysis failed. Please try again.");
+      }
+      console.error("Analysis error:", error);
     } finally {
       setLoading(false);
     }
@@ -62,6 +90,16 @@ export default function Dashboard({ token }) {
             <h2 className="text-3xl font-bold text-white mb-2">Upload Scan</h2>
             <p className="text-slate-400 text-sm leading-relaxed">Securely run patient radiographs through the triple-architecture XAI ensemble.</p>
           </div>
+
+          {error && (
+            <motion.div 
+              initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+              className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-start gap-3 text-red-400 text-sm"
+            >
+              <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </motion.div>
+          )}
           
           <div className="space-y-4 mt-auto">
             <select 

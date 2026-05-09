@@ -2,6 +2,7 @@ import os
 import io
 import pickle
 import warnings
+import logging
 import numpy as np
 import cv2
 import base64
@@ -26,12 +27,18 @@ from tensorflow import keras
 warnings.filterwarnings("ignore", message="The structure of `inputs` doesn't match the expected structure.*")
 warnings.filterwarnings("ignore", message="Skipping variable loading for optimizer .*")
 
-SECRET_KEY = "super-secret-ris-key-change-in-production"
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Environment-based configuration
+SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-ris-key-change-in-production")
 ALGORITHM = "HS256"
 TEST_EMAIL = "test@ris.local"
 TEST_PASSWORD = "Test@12345"
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./users.db")
 
-engine = create_engine("sqlite:///./users.db", connect_args={"check_same_thread": False})
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -66,6 +73,18 @@ class UserCreate(BaseModel):
     name: str
     email: str
     password: str
+    
+    class Config:
+        min_str_len = 1
+    
+    def validate(self):
+        if not self.name or len(self.name.strip()) < 2:
+            raise ValueError("Name must be at least 2 characters long")
+        if "@" not in self.email or len(self.email) < 5:
+            raise ValueError("Invalid email format")
+        if len(self.password) < 6:
+            raise ValueError("Password must be at least 6 characters long")
+        return True
 
 class UserLogin(BaseModel):
     email: str
@@ -73,27 +92,43 @@ class UserLogin(BaseModel):
 
 @app.post("/api/signup")
 def signup(user: UserCreate, db: Session = Depends(get_db)):
+    try:
+        user.validate()
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    
     db_user = db.query(UserDB).filter(UserDB.email == user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
-    hashed_pw = pwd_context.hash(user.password)
-    new_user = UserDB(name=user.name, email=user.email, hashed_password=hashed_pw)
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    token = jwt.encode({"sub": new_user.email, "exp": datetime.utcnow() + timedelta(hours=24)}, SECRET_KEY, algorithm=ALGORITHM)
-    return {"token": token, "user": {"name": new_user.name, "email": new_user.email}}
+    
+    try:
+        hashed_pw = pwd_context.hash(user.password)
+        new_user = UserDB(name=user.name, email=user.email, hashed_password=hashed_pw)
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        token = jwt.encode({"sub": new_user.email, "exp": datetime.utcnow() + timedelta(hours=24)}, SECRET_KEY, algorithm=ALGORITHM)
+        logger.info(f"New user registered: {new_user.email}")
+        return {"token": token, "user": {"name": new_user.name, "email": new_user.email}}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Signup error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Registration failed")
 
 @app.post("/api/login")
 def login(user: UserLogin, db: Session = Depends(get_db)):
     if user.email == TEST_EMAIL and user.password == TEST_PASSWORD:
         token = jwt.encode({"sub": TEST_EMAIL, "exp": datetime.utcnow() + timedelta(hours=24)}, SECRET_KEY, algorithm=ALGORITHM)
+        logger.info(f"Test user logged in: {TEST_EMAIL}")
         return {"token": token, "user": {"name": "Test Radiologist", "email": TEST_EMAIL}}
 
     db_user = db.query(UserDB).filter(UserDB.email == user.email).first()
     if not db_user or not pwd_context.verify(user.password, db_user.hashed_password):
+        logger.warning(f"Failed login attempt: {user.email}")
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    
     token = jwt.encode({"sub": db_user.email, "exp": datetime.utcnow() + timedelta(hours=24)}, SECRET_KEY, algorithm=ALGORITHM)
+    logger.info(f"User logged in: {db_user.email}")
     return {"token": token, "user": {"name": db_user.name, "email": db_user.email}}
 
 def verify_token(token: str | None = Depends(oauth2_scheme)):
@@ -172,6 +207,10 @@ def load_labels(filepath, default=None):
             return list(labels)
         return [str(labels)]
     except FileNotFoundError:
+        logger.warning(f"Labels file not found: {filepath}")
+        return default or []
+    except Exception as e:
+        logger.error(f"Error loading labels from {filepath}: {str(e)}")
         return default or []
 
 def load_torch_checkpoint(weights_path):
@@ -179,41 +218,54 @@ def load_torch_checkpoint(weights_path):
         return torch.load(weights_path, map_location=DEVICE, weights_only=True)
     except TypeError:
         return torch.load(weights_path, map_location=DEVICE)
-    except Exception:
-        return torch.load(weights_path, map_location=DEVICE, weights_only=False)
+    except Exception as e:
+        logger.error(f"Error loading torch checkpoint {weights_path}: {str(e)}")
+        return None
 
 def load_optional_torch_serialized_model(weights_path):
     if not os.path.exists(weights_path):
+        logger.warning(f"Model file not found: {weights_path}")
         return None
     try:
         checkpoint = load_torch_checkpoint(weights_path)
         return checkpoint if isinstance(checkpoint, nn.Module) else None
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error loading optional torch model {weights_path}: {str(e)}")
         return None
 
 def load_torch_model(ModelClass, weights_path, num_classes):
     if not os.path.exists(weights_path):
+        logger.warning(f"Torch model weights not found: {weights_path}")
         return None
-    model = ModelClass(num_classes).to(DEVICE)
-    checkpoint = load_torch_checkpoint(weights_path)
-    if checkpoint is None:
+    try:
+        model = ModelClass(num_classes).to(DEVICE)
+        checkpoint = load_torch_checkpoint(weights_path)
+        if checkpoint is None:
+            return None
+        if isinstance(checkpoint, nn.Module):
+            return checkpoint.to(DEVICE).eval()
+        if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
+            checkpoint = checkpoint["state_dict"]
+        if isinstance(checkpoint, dict):
+            cleaned_state_dict = {key.replace("module.", ""): value for key, value in checkpoint.items()}
+            model.load_state_dict(cleaned_state_dict, strict=False)
+            model.eval()
+            return model
         return None
-    if isinstance(checkpoint, nn.Module):
-        return checkpoint.to(DEVICE).eval()
-    if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
-        checkpoint = checkpoint["state_dict"]
-    if isinstance(checkpoint, dict):
-        cleaned_state_dict = {key.replace("module.", ""): value for key, value in checkpoint.items()}
-        model.load_state_dict(cleaned_state_dict, strict=False)
-        model.eval()
-        return model
-    return None
+    except Exception as e:
+        logger.error(f"Error loading torch model {weights_path}: {str(e)}")
+        return None
 
 def load_keras_model(weights_path):
     if not os.path.exists(weights_path):
+        logger.warning(f"Keras model file not found: {weights_path}")
         return None
-    with open(weights_path, "rb") as f:
-        return pickle.load(f)
+    try:
+        with open(weights_path, "rb") as f:
+            return pickle.load(f)
+    except Exception as e:
+        logger.error(f"Error loading keras model {weights_path}: {str(e)}")
+        return None
 
 def preprocess_keras_image(image, model_key):
     image = image.resize((CT_IMG_SIZE, CT_IMG_SIZE))
@@ -510,6 +562,27 @@ def make_swin_proxy_result(ct_model_outputs, original_img):
         "overlay": proxy_overlay,
     }
 
+@app.get("/api/health")
+def health_check():
+    """Health check endpoint to verify API and model status"""
+    return {
+        "status": "healthy",
+        "device": DEVICE,
+        "models_loaded": {
+            "xray": {
+                "densenet": system_models["xray"]["densenet"]["model"] is not None,
+                "resnet": system_models["xray"]["resnet"]["model"] is not None,
+                "swin": system_models["xray"]["swin"]["model"] is not None,
+            },
+            "ct": {
+                "densenet": system_models["ct"]["densenet"]["model"] is not None,
+                "resnet": system_models["ct"]["resnet"]["model"] is not None,
+                "cnn": system_models["ct"]["cnn"]["model"] is not None,
+                "swin": system_models["ct"]["swin"]["model"] is not None,
+            }
+        }
+    }
+
 @app.post("/api/analyze")
 async def analyze(image: UploadFile = File(...), scanType: str = Form("xray"), current_user: str = Depends(verify_token)):
     try:
@@ -595,10 +668,15 @@ async def analyze(image: UploadFile = File(...), scanType: str = Form("xray"), c
                     "overlay": f"data:image/jpeg;base64,{image_to_base64(result['overlay'])}",
                 }
 
+        logger.info(f"Analysis completed for user {current_user}, scan type: {scan_category}")
         return results
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Analysis error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Analysis failed. Please try again.")
 
 if __name__ == "__main__":
     import uvicorn
+    logger.info(f"Starting RIS backend on 0.0.0.0:8000, Device: {DEVICE}")
     uvicorn.run(app, host="0.0.0.0", port=8000)
