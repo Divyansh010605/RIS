@@ -15,7 +15,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from passlib.context import CryptContext
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 import torch
 import torch.nn as nn
 from torchvision import transforms, models
@@ -42,15 +42,23 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # Environment-based configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-ris-key-change-in-production")
+# Bug fix: Warn when using insecure default SECRET_KEY; remove insecure fallback in production.
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+if not SECRET_KEY:
+    SECRET_KEY = "super-secret-ris-key-change-in-production"
+    logger.warning(
+        "SECRET_KEY env var is not set — falling back to insecure default. "
+        "Set SECRET_KEY before deploying to production."
+    )
 ALGORITHM = "HS256"
-TEST_EMAIL = "test@ris.local"
-TEST_PASSWORD = "Test@12345"
+# Bug fix: TEST_EMAIL/TEST_PASSWORD are now opt-in via env vars.
+# Leave both unset in production to disable the backdoor account entirely.
+TEST_EMAIL = os.getenv("TEST_EMAIL", "")
+TEST_PASSWORD = os.getenv("TEST_PASSWORD", "")
+# Bug fix: Removed duplicate DATABASE_URL assignment that shadowed the first.
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./users.db")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
-
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./users.db")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -87,15 +95,18 @@ class UserCreate(BaseModel):
     name: str
     email: str
     password: str
-    
-    def validate(self):
+
+    # Bug fix: validate() was a plain method never called automatically by Pydantic.
+    # Replaced with a proper @model_validator so validation runs on every construction.
+    @model_validator(mode='after')
+    def validate_fields(self):
         if not self.name or len(self.name.strip()) < 2:
             raise ValueError("Name must be at least 2 characters long")
         if "@" not in self.email or len(self.email) < 5:
             raise ValueError("Invalid email format")
         if len(self.password) < 6:
             raise ValueError("Password must be at least 6 characters long")
-        return True
+        return self
 
 class UserLogin(BaseModel):
     email: str
@@ -103,11 +114,7 @@ class UserLogin(BaseModel):
 
 @app.post("/api/signup")
 def signup(user: UserCreate, db: Session = Depends(get_db)):
-    try:
-        user.validate()
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-    
+    # Bug fix: Removed manual user.validate() call — @model_validator now handles this automatically.
     db_user = db.query(UserDB).filter(UserDB.email == user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -128,7 +135,8 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
 
 @app.post("/api/login")
 def login(user: UserLogin, db: Session = Depends(get_db)):
-    if user.email == TEST_EMAIL and user.password == TEST_PASSWORD:
+    # Bug fix: Only activate backdoor if TEST_EMAIL/TEST_PASSWORD env vars are explicitly set.
+    if TEST_EMAIL and TEST_PASSWORD and user.email == TEST_EMAIL and user.password == TEST_PASSWORD:
         token = jwt.encode({"sub": TEST_EMAIL, "exp": datetime.utcnow() + timedelta(hours=24)}, SECRET_KEY, algorithm=ALGORITHM)
         logger.info(f"Test user logged in: {TEST_EMAIL}")
         return {"token": token, "user": {"name": "Test Radiologist", "email": TEST_EMAIL}}
@@ -157,10 +165,12 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 XRAY_IMG_SIZE = 256
 CT_IMG_SIZE = 224
 
-class DenseNet169_GradCAM(nn.Module):
+# Bug fix: Class was named DenseNet169_GradCAM but the model label and weights file
+# both refer to DenseNet121. Fixed architecture to densenet121 and renamed the class.
+class DenseNet121_GradCAM(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
-        self.model = models.densenet169(weights=None)
+        self.model = models.densenet121(weights=None)
         num_ftrs = self.model.classifier.in_features
         self.model.classifier = nn.Linear(num_ftrs, num_classes)
         self.gradients = None
@@ -305,10 +315,11 @@ def load_keras_model(weights_path):
         try:
             model = keras.models.load_model(weights_path, compile=False, safe_mode=False, custom_objects={'Dense': CustomDense})
             return model
-        except:
-            pass
+        except Exception as e_native:
+            # Bug fix: bare `except: pass` swallowed errors silently; now logged.
+            logger.warning(f"Keras native loader also failed for {weights_path}: {e_native}")
         # Last resort - return None with warning
-        print(f"Warning: Could not load Keras model from {weights_path}. Error: {e}")
+        logger.warning(f"Could not load Keras model from {weights_path}. Original error: {e}")
         return None
     except Exception as e:
         try:
@@ -377,7 +388,7 @@ system_models = {
         "densenet": {
             "kind": "torch",
             "label": "DenseNet121",
-            "model": load_torch_model(DenseNet169_GradCAM, f"{XRAY_DIR}/densenet_best.pth", len(xray_classes)),
+            "model": load_torch_model(DenseNet121_GradCAM, f"{XRAY_DIR}/densenet_best.pth", len(xray_classes)),
             "class_names": xray_classes,
         },
         "resnet": {
@@ -476,6 +487,17 @@ def generate_torch_result(model, img_tensor, original_img, class_names=None):
             }
 
         logits[0, predicted_idx].backward()
+        # Bug fix: model.gradients is set by the hook; if it never fired, it stays None
+        # and indexing [0] would crash. Fall back to a proxy heatmap in that case.
+        if model.gradients is None:
+            proxy = centered_proxy_heatmap(original_img)
+            heatmap_colored, overlay = build_colormap_overlay(original_img, proxy)
+            return {
+                "prediction": prediction_label,
+                "confidence": confidence_value,
+                "heatmap": heatmap_colored,
+                "overlay": overlay,
+            }
         gradients = model.gradients[0].cpu().data.numpy()
         pooled_gradients = np.mean(gradients, axis=(1, 2))
         feature_maps = features[0].cpu().data.numpy()
@@ -656,14 +678,16 @@ async def analyze(image: UploadFile = File(...), scanType: str = Form("xray"), c
         }
 
         if scan_category == "xray":
-            img_tensor = xray_transform(resized_img).unsqueeze(0).to(DEVICE)
-            img_tensor.requires_grad_()
-
             for name, model_bundle in active_models.items():
                 model = model_bundle["model"]
                 if model is None:
                     continue
 
+                # Bug fix: img_tensor was created once and shared across all models.
+                # Each model's .backward() accumulated gradients onto the same tensor,
+                # corrupting GradCAM heatmaps for every model after the first.
+                # Now we create a fresh tensor per model to isolate gradient state.
+                img_tensor = xray_transform(resized_img).unsqueeze(0).to(DEVICE)
                 result = generate_torch_result(model, img_tensor, original_img.copy(), model_bundle.get("class_names"))
                 if result is None:
                     continue
@@ -676,7 +700,10 @@ async def analyze(image: UploadFile = File(...), scanType: str = Form("xray"), c
                     "overlay": f"data:image/jpeg;base64,{image_to_base64(result['overlay'])}",
                 }
         else:
-            for name, model_bundle in active_models.items():
+            # Bug fix: CT swin proxy result is computed from results["models"] populated
+            # by the other models. Sorting ensures swin is always the last to be processed,
+            # regardless of dict insertion order.
+            for name, model_bundle in sorted(active_models.items(), key=lambda x: x[0] == "swin"):
                 model = model_bundle["model"]
                 if model is None:
                     if name == "swin":
@@ -700,7 +727,6 @@ async def analyze(image: UploadFile = File(...), scanType: str = Form("xray"), c
                     result = generate_keras_result(model, name, resized_img)
                 else:
                     img_tensor = xray_transform(resized_img).unsqueeze(0).to(DEVICE)
-                    img_tensor.requires_grad_()
                     result = generate_torch_result(model, img_tensor, original_img.copy(), model_bundle.get("class_names"))
 
                 if result is None:

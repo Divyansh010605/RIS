@@ -31,7 +31,8 @@ export default function App() {
         <Routes>
           <Route path="/" element={!token ? <Login onLogin={loginUser} /> : <Navigate to="/dashboard" replace />} />
           <Route path="/signup" element={!token ? <Signup onLogin={loginUser} /> : <Navigate to="/dashboard" replace />} />
-          <Route path="/dashboard" element={<Dashboard token={token} />} />
+          {/* Bug fix: Dashboard was unguarded — any URL visitor could access it without a token. */}
+          <Route path="/dashboard" element={token ? <Dashboard token={token} /> : <Navigate to="/" replace />} />
         </Routes>
       </div>
     </Router>

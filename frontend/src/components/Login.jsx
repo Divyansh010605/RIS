@@ -1,13 +1,11 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Activity, ArrowRight, Lock, Mail, AlertCircle, UserCircle, ClipboardCopy } from 'lucide-react';
+import { Activity, ArrowRight, Lock, Mail, AlertCircle, UserCircle } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 // Replace with your Codespace URL in production
 const API_URL = 'http://127.0.0.1:8000'; 
-const TEST_EMAIL = 'test@ris.local';
-const TEST_PASSWORD = 'Test@12345';
 
 export default function Login({ onLogin }) {
   const [email, setEmail] = useState('');
@@ -23,6 +21,8 @@ export default function Login({ onLogin }) {
     try {
       const res = await axios.post(`${API_URL}/api/login`, { email, password });
       onLogin(res.data.token, res.data.user);
+      // Bug fix: navigate was missing after login — user stayed on the login page.
+      navigate('/dashboard');
     } catch (err) {
       setError(err.response?.data?.detail || 'Login failed');
     }
@@ -32,11 +32,6 @@ export default function Login({ onLogin }) {
   const handleGuestAccess = () => {
     onLogin('guest', { name: 'Guest User', email: 'Free dashboard access' });
     navigate('/dashboard');
-  };
-
-  const fillTestCredentials = () => {
-    setEmail(TEST_EMAIL);
-    setPassword(TEST_PASSWORD);
   };
 
   return (
@@ -82,20 +77,6 @@ export default function Login({ onLogin }) {
         </form>
 
         <div className="mt-4 space-y-3">
-          <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4 text-sm text-slate-300">
-            <div className="flex items-center gap-2 text-cyan-300 font-semibold mb-2">
-              <ClipboardCopy className="w-4 h-4" /> Test credentials
-            </div>
-            <p>Email: <span className="font-mono text-white">{TEST_EMAIL}</span></p>
-            <p>Password: <span className="font-mono text-white">{TEST_PASSWORD}</span></p>
-            <button
-              type="button"
-              onClick={fillTestCredentials}
-              className="mt-3 inline-flex items-center gap-2 text-xs font-semibold text-cyan-300 hover:text-cyan-200"
-            >
-              <UserCircle className="w-4 h-4" /> Fill test login fields
-            </button>
-          </div>
           <button
             type="button"
             onClick={handleGuestAccess}

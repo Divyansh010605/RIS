@@ -1,11 +1,12 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UploadCloud, Loader2, RefreshCw, Scan, Fingerprint, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 
 const API_URL = 'http://127.0.0.1:8000';
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const ALLOWED_FORMATS = ['image/jpeg', 'image/png', 'image/gif'];
+// Bug fix: GIF removed — animated GIFs would silently analyse only frame 0 with no user feedback.
+const ALLOWED_FORMATS = ['image/jpeg', 'image/png'];
 
 export default function Dashboard({ token }) {
   const [file, setFile] = useState(null);
@@ -15,6 +16,14 @@ export default function Dashboard({ token }) {
   const [results, setResults] = useState(null);
   const [error, setError] = useState('');
   const fileInputRef = useRef(null);
+
+  // Bug fix: URL.createObjectURL was called on every file selection but revokeObjectURL was
+  // never called, leaking memory for the entire browser session. This effect revokes the
+  // previous blob URL before the next one is set and on component unmount.
+  useEffect(() => {
+    if (!preview) return;
+    return () => URL.revokeObjectURL(preview);
+  }, [preview]);
 
   const modelEntries = Object.entries(results?.models ?? {});
 
