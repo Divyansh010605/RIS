@@ -26,13 +26,8 @@ os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")
 import tensorflow as tf
 from tensorflow import keras
 
-# Patch Keras Dense layer to ignore unrecognized quantization_config parameter
-original_dense_from_config = keras.layers.Dense.from_config
-@classmethod
-def patched_dense_from_config(cls, config):
-    config.pop('quantization_config', None)
-    return original_dense_from_config(config)
-keras.layers.Dense.from_config = patched_dense_from_config
+# CustomDense (defined later) is the single mechanism for handling
+# quantization_config incompatibilities — no global monkey-patch needed.
 
 warnings.filterwarnings("ignore")
 tf.get_logger().setLevel('ERROR')
@@ -83,9 +78,13 @@ def get_db():
         db.close()
 
 app = FastAPI()
+# CORS fix: allow_origins=["*"] + allow_credentials=True is invalid per the CORS spec
+# — browsers reject credentialed requests to wildcard origins.
+# Use an explicit list (or CORS_ORIGINS env var) in production.
+_cors_origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -243,16 +242,8 @@ def load_torch_checkpoint(weights_path):
         logger.error(f"Error loading torch checkpoint {weights_path}: {str(e)}")
         return None
 
-def load_optional_torch_serialized_model(weights_path):
-    if not os.path.exists(weights_path):
-        logger.warning(f"Model file not found: {weights_path}")
-        return None
-    try:
-        checkpoint = load_torch_checkpoint(weights_path)
-        return checkpoint if isinstance(checkpoint, nn.Module) else None
-    except Exception as e:
-        logger.error(f"Error loading optional torch model {weights_path}: {str(e)}")
-        return None
+# load_optional_torch_serialized_model removed: it was only used for the CT Swin
+# model which never loads successfully. The CT Swin slot has been removed entirely.
 
 def load_torch_model(ModelClass, weights_path, num_classes):
     if not os.path.exists(weights_path):
@@ -277,60 +268,43 @@ def load_torch_model(ModelClass, weights_path, num_classes):
         logger.error(f"Error loading torch model {weights_path}: {str(e)}")
         return None
 
-class KerasCompatibleUnpickler(pickle.Unpickler):
-    """Custom unpickler that removes incompatible Keras parameters during deserialization"""
-    def find_class(self, module, name):
-        if module == 'keras.src.layers.core.dense' or (module == 'keras.layers' and name == 'Dense'):
-            return super().find_class('keras.src.layers.core.dense', 'Dense')
-        return super().find_class(module, name)
+# KerasCompatibleUnpickler removed: it was defined but never called anywhere.
 
 class CustomDense(keras.layers.Dense):
+    """Drops the unrecognised quantization_config kwarg so saved models load cleanly."""
     def __init__(self, *args, **kwargs):
         kwargs.pop('quantization_config', None)
         super().__init__(*args, **kwargs)
 
 def load_keras_model(weights_path):
+    """Load a Keras model from a pickle or native Keras file.
+
+    Strategy (single fallback path — raw byte mutation removed as unsafe):
+      1. Standard pickle.load
+      2. keras.models.load_model with CustomDense to strip quantization_config
+    """
     if not os.path.exists(weights_path):
         logger.warning(f"Keras model file not found: {weights_path}")
         return None
     try:
-        # Try standard pickle first
         with open(weights_path, "rb") as f:
             model = pickle.load(f)
         return model
-    except (TypeError, AttributeError) as e:
-        # If quantization_config error, try custom unpickler
-        if 'quantization_config' in str(e):
-            try:
-                with open(weights_path, "rb") as f:
-                    # Read and modify pickle data to remove quantization_config
-                    data = f.read()
-                    # Replace quantization_config entries
-                    data = data.replace(b"'quantization_config'", b"'_disabled_config'")
-                    model = pickle.loads(data)
-                return model
-            except Exception as e_inner:
-                pass
-        # Try keras native loader
-        try:
-            model = keras.models.load_model(weights_path, compile=False, safe_mode=False, custom_objects={'Dense': CustomDense})
-            return model
-        except Exception as e_native:
-            # Bug fix: bare `except: pass` swallowed errors silently; now logged.
-            logger.warning(f"Keras native loader also failed for {weights_path}: {e_native}")
-        # Last resort - return None with warning
-        logger.warning(f"Could not load Keras model from {weights_path}. Original error: {e}")
+    except Exception as e_pickle:
+        logger.warning(f"pickle.load failed for {weights_path}: {e_pickle} — trying keras native loader")
+    try:
+        model = keras.models.load_model(
+            weights_path, compile=False, safe_mode=False,
+            custom_objects={'Dense': CustomDense}
+        )
+        return model
+    except Exception as e_keras:
+        logger.error(f"Could not load Keras model from {weights_path}. Keras error: {e_keras}")
         return None
-    except Exception as e:
-        try:
-            model = keras.models.load_model(weights_path, compile=False, safe_mode=False, custom_objects={'Dense': CustomDense})
-            return model
-        except Exception as e2:
-            print(f"Warning: Could not load Keras model from {weights_path}. Error: {e}. Keras Error: {e2}")
-            return None
 
 def preprocess_keras_image(image, model_key):
-    image = image.resize((CT_IMG_SIZE, CT_IMG_SIZE))
+    # Resize removed: the caller (analyze endpoint) already resizes to CT_IMG_SIZE
+    # before passing the image in. Resizing again here was a redundant no-op.
     image_array = np.array(image, dtype=np.float32)
     if model_key == "densenet":
         image_array = tf.keras.applications.densenet.preprocess_input(image_array)
@@ -426,18 +400,16 @@ system_models = {
             "last_conv_layer": "last_conv_layer",
             "preprocess": "basic",
         },
-        "swin": {
-            "kind": "torch",
-            "label": "Swin Transformer",
-            "model": load_optional_torch_serialized_model(f"{CT_DIR}/swin_model.pkl"),
-            "class_names": ["Negative", "Positive"],
-            "unavailable_reason": "swin checkpoint could not be restored on current runtime",
-        },
+        # CT Swin entry removed: the model file never loads successfully on any
+        # tested runtime, making the slot permanently dead weight. The elaborate
+        # make_swin_proxy_result workaround has been removed with it.
     }
 }
 
+# Resize removed from xray_transform: the analyze endpoint pre-resizes PIL images
+# to XRAY_IMG_SIZE before calling this transform, making transforms.Resize a
+# redundant second pass. ToTensor + Normalize are the only operations needed.
 xray_transform = transforms.Compose([
-    transforms.Resize((XRAY_IMG_SIZE, XRAY_IMG_SIZE)),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
@@ -583,57 +555,8 @@ def image_to_base64(img_array):
     img.save(buff, format="JPEG")
     return base64.b64encode(buff.getvalue()).decode("utf-8")
 
-def decode_base64_image(data_url):
-    encoded = data_url.split(",", 1)[1] if "," in data_url else data_url
-    arr = np.frombuffer(base64.b64decode(encoded), dtype=np.uint8)
-    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
-
-def make_swin_proxy_result(ct_model_outputs, original_img):
-    available_items = [item for item in ct_model_outputs.values() if item.get("prediction") != "Unavailable"]
-    if not available_items:
-        heatmap_img, overlay_img = build_colormap_overlay(original_img, centered_proxy_heatmap(original_img))
-        return {
-            "prediction": "No Cancer Detected",
-            "confidence": 0.5,
-            "heatmap": heatmap_img,
-            "overlay": overlay_img,
-        }
-
-    vote_weights = [max(0.05, float(item.get("confidence", 0.5))) for item in available_items]
-    votes = [1 if item.get("prediction") == "Cancer Detected" else 0 for item in available_items]
-    proxy_prob = float(np.average(votes, weights=vote_weights))
-    prediction = "Cancer Detected" if proxy_prob >= 0.5 else "No Cancer Detected"
-    confidence = proxy_prob if prediction == "Cancer Detected" else 1 - proxy_prob
-
-    saliency_maps = []
-    saliency_weights = []
-    for item in available_items:
-        hm = decode_base64_image(item["heatmap"])
-        if hm is None:
-            continue
-        gray = cv2.cvtColor(hm, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
-        gray = cv2.GaussianBlur(gray, (0, 0), 3.0)
-        saliency_maps.append(gray)
-        saliency_weights.append(max(0.05, float(item.get("confidence", 0.5))))
-
-    if saliency_maps:
-        merged_saliency = np.average(np.stack(saliency_maps, axis=0), axis=0, weights=np.array(saliency_weights))
-    else:
-        merged_saliency = centered_proxy_heatmap(original_img)
-
-    # Keep attention within the scanned body region to avoid noisy background artifacts.
-    body_mask = (cv2.cvtColor(original_img, cv2.COLOR_BGR2GRAY) > 8).astype(np.float32)
-    body_mask = cv2.GaussianBlur(body_mask, (0, 0), 2.0)
-    merged_saliency = merged_saliency * np.clip(body_mask, 0.2, 1.0)
-    merged_saliency = cv2.GaussianBlur(merged_saliency, (0, 0), 4.0)
-
-    merged_heatmap, proxy_overlay = build_colormap_overlay(original_img, merged_saliency)
-    return {
-        "prediction": prediction,
-        "confidence": float(confidence),
-        "heatmap": merged_heatmap,
-        "overlay": proxy_overlay,
-    }
+# decode_base64_image and make_swin_proxy_result removed together with the CT Swin
+# entry. decode_base64_image had no other callers.
 
 @app.get("/api/health")
 def health_check():
@@ -651,7 +574,6 @@ def health_check():
                 "densenet": system_models["ct"]["densenet"]["model"] is not None,
                 "resnet": system_models["ct"]["resnet"]["model"] is not None,
                 "cnn": system_models["ct"]["cnn"]["model"] is not None,
-                "swin": system_models["ct"]["swin"]["model"] is not None,
             }
         }
     }
@@ -700,27 +622,14 @@ async def analyze(image: UploadFile = File(...), scanType: str = Form("xray"), c
                     "overlay": f"data:image/jpeg;base64,{image_to_base64(result['overlay'])}",
                 }
         else:
-            # Bug fix: CT swin proxy result is computed from results["models"] populated
-            # by the other models. Sorting ensures swin is always the last to be processed,
-            # regardless of dict insertion order.
-            for name, model_bundle in sorted(active_models.items(), key=lambda x: x[0] == "swin"):
+            for name, model_bundle in active_models.items():
                 model = model_bundle["model"]
                 if model is None:
-                    if name == "swin":
-                        proxy = make_swin_proxy_result(results["models"], original_img)
-                        results["models"][name] = {
-                            "label": model_bundle["label"],
-                            "prediction": proxy["prediction"],
-                            "confidence": round(proxy["confidence"], 4),
-                            "heatmap": f"data:image/jpeg;base64,{image_to_base64(proxy['heatmap'])}",
-                            "overlay": f"data:image/jpeg;base64,{image_to_base64(proxy['overlay'])}",
-                        }
-                    else:
-                        results["models"][name] = unavailable_result(
-                            model_bundle["label"],
-                            original_img,
-                            model_bundle.get("unavailable_reason", "model file is missing or incompatible"),
-                        )
+                    results["models"][name] = unavailable_result(
+                        model_bundle["label"],
+                        original_img,
+                        model_bundle.get("unavailable_reason", "model file is missing or incompatible"),
+                    )
                     continue
 
                 if model_bundle["kind"] == "keras":
