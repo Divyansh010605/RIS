@@ -9,5 +9,7 @@ pillow
 sqlalchemy
 passlib[bcrypt]
 pyjwt
+tensorflow
+keras
 timm
 pydicom
