@@ -52,7 +52,7 @@ TEST_EMAIL = os.getenv("TEST_EMAIL", "")
 TEST_PASSWORD = os.getenv("TEST_PASSWORD", "")
 # Bug fix: Removed duplicate DATABASE_URL assignment that shadowed the first.
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./users.db")
-SERVER_PORT = int(os.getenv("SERVER_PORT", "8000"))
+SERVER_PORT = int(os.getenv("PORT", "8000"))
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
