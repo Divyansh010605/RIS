@@ -59,7 +59,7 @@ This system evaluates the strengths of different neural architectures in a clini
 
 1. **Clone the Repository**
    ```bash
-   git clone [https://github.com/Divyansh010605/your-repo-name.git](https://github.com/Divyansh010605/your-repo-name.git)
+   git clone [https://github.com/Divyansh010605/RIS.git](https://github.com/Divyansh010605/RIS.git)
    cd your-repo-name
    ```
 
